@@ -1,0 +1,55 @@
+name: Publish Tuition Report Check
+
+# Runs on every change: after you upload the site zip, and after every approval or removal.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack the site
+        run: |
+          z=$(find . -name 'tuition-check-site*.zip' -not -path './.git/*' | sort | tail -1)
+          if [ -z "$z" ]; then echo "::error::Upload tuition-check-site.zip to the repository first."; exit 1; fi
+          mkdir -p _unz _site
+          unzip -o -q "$z" -d _unz
+          src=$(dirname "$(find _unz -name approve.html | head -1)")
+          cp -r "$src"/. _site/
+          touch _site/.nojekyll
+
+      - name: Build the tutor list from the tutors folder
+        run: |
+          node -e '
+          const fs=require("fs"),p=require("path"),out=[];
+          if(fs.existsSync("tutors"))for(const f of fs.readdirSync("tutors").sort()){
+            if(!f.endsWith(".json"))continue;
+            try{const t=JSON.parse(fs.readFileSync(p.join("tutors",f),"utf8"));
+              if(!t.key||!t.name)throw new Error("needs name and key");
+              out.push({name:String(t.name),id:String(t.id||""),added:String(t.added||""),key:String(t.key).trim(),file:f})}
+            catch(e){console.log("::warning::Skipped tutors/"+f+": "+e.message)}}
+          fs.writeFileSync("_site/tutors.json",JSON.stringify({keys:out}));
+          console.log(out.length+" approved tutor(s)");'
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
